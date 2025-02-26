@@ -6,15 +6,8 @@ settings:
 
 importers:
 
-  .: {}
-
-  rs-wgpu-learn/pkg: {}
-
-  ts-webgpu-learn:
+  .:
     devDependencies:
-      rs-wgpu-learn:
-        specifier: workspace:*
-        version: link:../rs-wgpu-learn/pkg
       typescript:
         specifier: ~5.7.2
         version: 5.7.3
