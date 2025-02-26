@@ -1,0 +1,3 @@
+packages:
+  - 'ts-webgpu-learn'
+  - "rs-wgpu-learn/pkg"

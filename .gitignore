@@ -1,0 +1,9 @@
+# Vite project
+node_modules/
+dist/
+.vite/
+*.log
+
+# Rust project
+target/
+.vscode/
