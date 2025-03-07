@@ -1,5 +1,5 @@
 use log::info;
-use wgpu::{BufferUsages, InstanceDescriptor, util::DeviceExt};
+use wgpu::{BufferUsages, InstanceDescriptor};
 
 fn main() -> anyhow::Result<()> {
     // 初始化日志系统（仅显示INFO及以上级别日志）
@@ -52,13 +52,6 @@ async fn run() -> anyhow::Result<()> {
 
     // 将输入数据写入存储缓冲区
     queue.write_buffer(&storage_buffer, 0, bytemuck::cast_slice(&input));
-
-    // 初始化存储缓冲区
-    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("storage_buffer"),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-        contents: bytemuck::cast_slice(&input),
-    });
 
     // 创建结果缓冲区
     let result_buffer = device.create_buffer(&wgpu::BufferDescriptor {
