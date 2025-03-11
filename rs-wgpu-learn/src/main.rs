@@ -67,46 +67,47 @@ async fn run() -> anyhow::Result<()> {
         source: wgpu::ShaderSource::Wgsl(include_str!("../../source/compute.wgsl").into()),
     });
 
-    // 创建绑定组布局
+    // 创建绑定组布局，描述了如何在着色器中访问绑定资源。
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("bind_group_layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::COMPUTE,
+            binding: 0,                              // 绑定点索引
+            visibility: wgpu::ShaderStages::COMPUTE, // 计算着色器阶段可见
             ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(0),
+                // 绑定类型为存储缓冲区
+                ty: wgpu::BufferBindingType::Storage { read_only: false }, // 支持读写
+                has_dynamic_offset: false,                                 // 不使用动态偏移
+                min_binding_size: wgpu::BufferSize::new(0),                // 最小绑定大小
             },
             count: None,
         }],
     });
 
-    // 创建绑定组
+    // 根据绑定组布局创建绑定组，将具体的存储缓冲区(storage_buffer)绑定到着色器程序中。
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bind_group"),
-        layout: &bind_group_layout,
+        layout: &bind_group_layout, // 使用的绑定组布局
         entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: storage_buffer.as_entire_binding(),
+            binding: 0,                                   // 绑定点索引
+            resource: storage_buffer.as_entire_binding(), // 绑定整个存储缓冲区
         }],
     });
 
-    // 创建计算管道布局
+    // 创建计算管道布局，描述了计算过程中如何访问绑定的资源。这里还指定了push_constant_ranges，但在当前示例中未使用。
     let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("compute_pipeline_layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        label: Some("compute_pipeline_layout"), // 计算管道布局的标识符
+        bind_group_layouts: &[&bind_group_layout], // 使用的绑定组布局引用列表
+        push_constant_ranges: &[],              // 推送常量范围，当前未使用
     });
 
-    // 创建计算管道
+    // 根据计算管道布局创建计算管道，指定使用的计算着色器模块(shader)和入口点(entry_point)。
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("compute_pipeline"),
-        layout: Some(&compute_pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        cache: None,
-        compilation_options: Default::default(),
+        label: Some("compute_pipeline"),         // 计算管道的标识符
+        layout: Some(&compute_pipeline_layout),  // 使用的计算管道布局
+        module: &shader,                         // 计算着色器模块
+        entry_point: Some("main"),               // 着色器程序入口点
+        cache: None,                             // 管道缓存设置，当前未使用
+        compilation_options: Default::default(), // 编译选项，默认配置
     });
 
     // 创建命令编码器
@@ -141,5 +142,7 @@ async fn run() -> anyhow::Result<()> {
     let res = result_buffer.slice(..).get_mapped_range().to_vec();
     let result: &[f32] = bytemuck::cast_slice(&res);
     info!("Result: {:?}", result);
+    result_buffer.unmap();
+
     Ok(())
 }
