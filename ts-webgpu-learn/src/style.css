@@ -1,3 +1,12 @@
 canvas {
   border: 1px solid black;
+  width: 100vw;
+  height: 100vh;
+}
+
+body,
+html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }

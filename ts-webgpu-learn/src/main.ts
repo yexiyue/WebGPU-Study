@@ -1,125 +1,126 @@
 import "./style.css";
-import computeWgsl from "../../source/compute.wgsl?raw";
+import triangle from "../../source/triangle.wgsl?raw";
 
-async function main() {
-  // 请求 GPU 适配器
-  const adapter = await navigator?.gpu.requestAdapter({
-    powerPreference: "low-power",
-  });
-
-  // 请求 GPU 设备
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    throw new Error("Failed to create device");
+class WebGPUApp {
+  constructor(
+    public device: GPUDevice,
+    public queue: GPUQueue,
+    public canvas: HTMLCanvasElement,
+    public ctx: GPUCanvasContext,
+    public pipeline: GPURenderPipeline
+  ) {
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const canvas = entry.target as HTMLCanvasElement;
+        const width = entry.contentBoxSize[0].inlineSize;
+        const height = entry.contentBoxSize[0].blockSize;
+        canvas.width = Math.min(width, device.limits.maxTextureDimension2D);
+        canvas.height = Math.min(height, device.limits.maxTextureDimension2D);
+      }
+    });
+    observer.observe(canvas);
   }
 
-  // 输入数据
-  const input = new Float32Array([1, 2, 3, 4]);
+  public static async create() {
+    const adapter = await navigator.gpu.requestAdapter();
+    // 请求GPU设备
+    const device = await adapter?.requestDevice();
+    if (!device) {
+      throw new Error("Couldn't request WebGPU device");
+    }
 
-  // 创建存储缓冲区
-  const storageBuffer = device.createBuffer({
-    label: "storage-buffer",
-    size: input.byteLength,
-    usage:
-      GPUBufferUsage.STORAGE |
-      GPUBufferUsage.COPY_DST |
-      GPUBufferUsage.COPY_SRC,
-  });
+    // 创建画布元素
+    const canvas = document.createElement("canvas");
+    document.querySelector("#app")?.appendChild(canvas);
 
-  // 将输入数据写入存储缓冲区
-  device?.queue.writeBuffer(storageBuffer, 0, input.buffer);
+    // 获取WebGPU上下文
+    const ctx = canvas.getContext("webgpu");
+    if (!ctx) {
+      throw new Error("Couldn't get WebGPU context");
+    }
 
-  // 创建结果缓冲区
-  const resultBuffer = device?.createBuffer({
-    label: "result-buffer",
-    size: storageBuffer.size,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
+    // 获取首选画布格式
+    const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
 
-  // 创建着色器模块
-  const shaderModel = device.createShaderModule({
-    label: "shader-model",
-    code: computeWgsl,
-  });
+    // 配置画布上下文
+    ctx.configure({
+      device,
+      format: preferredFormat,
+    });
 
-  // 创建绑定组布局时，通过设备(device)调用createBindGroupLayout方法，并传入包含绑定信息的对象。
-  const bindGroupLayout = device.createBindGroupLayout({
-    label: "bind-group-layout", // 绑定组布局的标识符
-    entries: [
-      {
-        binding: 0, // 绑定点索引
-        visibility: GPUShaderStage.COMPUTE, // 指定该资源对计算着色器阶段可见
-        buffer: {
-          // 资源类型为存储缓冲区
-          type: "storage",
-          hasDynamicOffset: false, // 是否支持动态偏移
-          minBindingSize: 0, // 最小绑定大小
-        },
+    // 创建着色器模块
+    const shader = device.createShaderModule({
+      code: triangle,
+    });
+
+    // 创建渲染管线
+    const pipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: shader,
+        entryPoint: "vs",
       },
-    ],
-  });
-
-  // 创建绑定组时，根据之前定义的绑定组布局(bindGroupLayout)，通过device.createBindGroup方法将实际的存储缓冲区(storageBuffer)绑定到0号位。
-  const bindGroup = device.createBindGroup({
-    layout: bindGroupLayout, // 使用的绑定组布局
-    entries: [
-      {
-        binding: 0,
-        resource: {
-          // 实际绑定的资源
-          buffer: storageBuffer, // 存储缓冲区
-        },
+      fragment: {
+        module: shader,
+        entryPoint: "fs",
+        targets: [
+          {
+            format: preferredFormat,
+          },
+        ],
       },
-    ],
-  });
+    });
+    return new WebGPUApp(device, device.queue, canvas, ctx, pipeline);
+  }
 
-  // 创建计算管道布局时，通过设备(device)调用createPipelineLayout方法，并传入包含绑定组布局(bindGroupLayouts)的数组。
-  const computePipelineLayout = device.createPipelineLayout({
-    label: "compute-pipeline-layout", // 计算管道布局的标识符
-    bindGroupLayouts: [bindGroupLayout], // 使用的绑定组布局列表
-  });
+  public render() {
+    const { device, ctx, pipeline } = this;
+    // 创建命令编码器（用于记录一系列GPU执行命令）
+    const encoder = device.createCommandEncoder();
 
-  // 创建计算管道时，根据之前定义的计算管道布局(computePipelineLayout)，通过device.createComputePipeline方法指定计算着色器模块(shaderModel)及其入口点(entryPoint)。
-  const computePipeline = device.createComputePipeline({
-    label: "compute-pipeline", // 计算管道的标识符
-    layout: computePipelineLayout, // 使用的计算管道布局
-    compute: {
-      module: shaderModel, // 计算着色器模块
-      entryPoint: "main", // 着色器程序入口点
-    },
-  });
+    // 获取当前Canvas的输出纹理（WebGPU渲染目标）
+    const output = ctx.getCurrentTexture();
+    const view = output.createView(); // 创建纹理视图用于渲染目标绑定
 
-  // 创建命令编码器
-  const encoder = device.createCommandEncoder({
-    label: "compute-encoder",
-  });
-  const pass = encoder.beginComputePass({
-    label: "compute-pass",
-  });
-  pass.setPipeline(computePipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(input.length);
-  pass.end();
+    // 开始渲染通道配置
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        // 配置颜色附件数组（此处仅使用一个主颜色目标）
+        {
+          view, // 绑定之前创建的纹理视图作为渲染目标
+          clearValue: { r: 0, g: 0, b: 0, a: 1 }, // 设置清除颜色为黑色（RGB 0,0,0）
+          loadOp: "clear", // 渲染前清除颜色缓冲区
+          storeOp: "store", // 渲染完成后将结果存储到颜色缓冲区
+        },
+      ],
+    });
 
-  // 将存储缓冲区的数据复制到结果缓冲区
-  encoder.copyBufferToBuffer(
-    storageBuffer,
-    0,
-    resultBuffer,
-    0,
-    input.byteLength
-  );
+    // 绑定当前渲染管线配置（顶点/片元着色器等）
+    pass.setPipeline(pipeline);
 
-  // 提交命令缓冲区
-  const commandBuffer = encoder.finish();
-  device.queue.submit([commandBuffer]);
+    // 执行绘制命令：绘制3个顶点构成的三角形
+    // 参数3表示顶点数量（与顶点着色器中数组长度一致）
+    pass.draw(3);
 
-  // 映射结果缓冲区并读取数据
-  await resultBuffer.mapAsync(GPUMapMode.READ);
-  const result = new Float32Array(resultBuffer.getMappedRange());
-  console.log("input", input);
-  console.log("result", result);
-  resultBuffer?.unmap();
+    // 结束当前渲染通道的配置
+    pass.end();
+
+    // 生成最终的命令缓冲区（包含所有已记录的渲染指令）
+    const commandBuffer = encoder.finish(); // 修正拼写错误：commanderBuffer → commandBuffer
+    device.queue.submit([commandBuffer]); // 将命令提交到GPU队列执行
+  }
+}
+
+async function main() {
+  const app = await WebGPUApp.create();
+
+  // 使用 requestAnimationFrame 实现持续渲染
+  const renderLoop = () => {
+    app.render();
+    requestAnimationFrame(renderLoop);
+  };
+
+  requestAnimationFrame(renderLoop);
 }
 
 // 调用主函数
