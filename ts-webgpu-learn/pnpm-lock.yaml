@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      webgpu-utils:
+        specifier: ^1.10.0
+        version: 1.10.0
     devDependencies:
       '@webgpu/types':
         specifier: ^0.1.54
@@ -347,6 +351,9 @@ packages:
       yaml:
         optional: true
 
+  webgpu-utils@1.10.0:
+    resolution: {integrity: sha512-L+mFcsv60No9yksOEJDebDtVqfNJvSu5dDKPW+rU9aUt69VXxSmZ1dhBXu9DVl280SKubJ4OmU9SnIL7CFad1g==}
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.25.0':
@@ -562,3 +569,5 @@ snapshots:
       rollup: 4.34.8
     optionalDependencies:
       fsevents: 2.3.3
+
+  webgpu-utils@1.10.0: {}

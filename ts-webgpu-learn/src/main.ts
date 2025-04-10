@@ -1,5 +1,6 @@
 import "./style.css";
-import triangle from "../../source/triangle.wgsl?raw";
+import uniformWgsl from "../../source/uniform.wgsl?raw";
+import { makeShaderDataDefinitions, makeStructuredView } from "webgpu-utils";
 
 class WebGPUApp {
   constructor(
@@ -7,7 +8,8 @@ class WebGPUApp {
     public queue: GPUQueue,
     public canvas: HTMLCanvasElement,
     public ctx: GPUCanvasContext,
-    public pipeline: GPURenderPipeline
+    public pipeline: GPURenderPipeline,
+    public bindGroup: GPUBindGroup
   ) {
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -50,7 +52,7 @@ class WebGPUApp {
 
     // 创建着色器模块
     const shader = device.createShaderModule({
-      code: triangle,
+      code: uniformWgsl, // 加载 WGSL 着色器代码
     });
 
     // 创建渲染管线
@@ -58,23 +60,64 @@ class WebGPUApp {
       layout: "auto",
       vertex: {
         module: shader,
-        entryPoint: "vs",
+        entryPoint: "vs", // 顶点着色器入口
       },
       fragment: {
         module: shader,
-        entryPoint: "fs",
+        entryPoint: "fs", // 片元着色器入口
         targets: [
           {
-            format: preferredFormat,
+            format: preferredFormat, // 渲染目标格式
           },
         ],
       },
     });
-    return new WebGPUApp(device, device.queue, canvas, ctx, pipeline);
+
+    // 使用工具函数解析着色器中的 uniform 数据定义
+    const defs = makeShaderDataDefinitions(uniformWgsl);
+    const params = makeStructuredView(defs.uniforms.params);
+
+    // 设置 uniform 数据的初始值
+    params.set({
+      color: [1.0, 1.0, 0, 1], // 设置颜色为黄色
+      scale: 0.5, // 缩放因子
+      offset: [0.5, 0.5], // 偏移量
+    });
+
+    // 创建 GPU 缓冲区以存储 uniform 数据
+    const buffer = device.createBuffer({
+      size: params.arrayBuffer.byteLength, // 缓冲区大小与 uniform 数据大小一致
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
+    });
+
+    // 将 uniform 数据写入缓冲区
+    device.queue.writeBuffer(buffer, 0, params.arrayBuffer);
+
+    // 创建绑定组，将 uniform 缓冲区绑定到着色器
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0), // 获取绑定组布局
+      entries: [
+        {
+          binding: 0, // 对应着色器中的 binding 位置
+          resource: {
+            buffer, // 绑定 uniform 缓冲区
+          },
+        },
+      ],
+    });
+
+    return new WebGPUApp(
+      device,
+      device.queue,
+      canvas,
+      ctx,
+      pipeline,
+      bindGroup
+    );
   }
 
   public render() {
-    const { device, ctx, pipeline } = this;
+    const { device, ctx, pipeline, bindGroup } = this;
     // 创建命令编码器（用于记录一系列GPU执行命令）
     const encoder = device.createCommandEncoder();
 
@@ -97,7 +140,7 @@ class WebGPUApp {
 
     // 绑定当前渲染管线配置（顶点/片元着色器等）
     pass.setPipeline(pipeline);
-
+    pass.setBindGroup(0, bindGroup); // 将 uniform 数据绑定到渲染管线
     // 执行绘制命令：绘制3个顶点构成的三角形
     // 参数3表示顶点数量（与顶点着色器中数组长度一致）
     pass.draw(3);

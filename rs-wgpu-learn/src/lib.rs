@@ -1,7 +1,54 @@
 use anyhow::Result;
 use std::sync::Arc;
-use wgpu::{Color, include_wgsl};
+use wgpu::{Color, include_wgsl, util::DeviceExt};
 use winit::window::Window;
+
+#[repr(C, align(16))]
+#[derive(Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Params {
+    /// size: 16, offset: 0, type: `vec4<f32>`
+    pub color: [f32; 4],
+    /// size: 8, offset: 16 (2*8), type: `vec2<f32>`
+    pub offset: [f32; 2],
+    /// size: 4, offset: 24 (4*6), type: `f32`
+    pub scale: f32,
+    pub _pad_scale: [u8; 0x8 - core::mem::size_of::<f32>()],
+}
+
+impl Params {
+    pub const fn new(color: [f32; 4], offset: [f32; 2], scale: f32) -> Self {
+        Self {
+            color,
+            offset,
+            scale,
+            _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
+        }
+    }
+
+    pub fn random() -> Self {
+        // 随机生成颜色
+        let color = [
+            rand::random_range(0.0..=1.0),
+            rand::random_range(0.0..=1.0),
+            rand::random_range(0.0..=1.0),
+            1.0,
+        ];
+        // 随机生成偏移量
+        let offset = [
+            rand::random_range(-1.0..=1.0),
+            rand::random_range(-1.0..=1.0),
+        ];
+        // 随机生成缩放因子
+        let scale = 0.5;
+
+        Self {
+            color,
+            offset,
+            scale,
+            _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
+        }
+    }
+}
 
 // Wgpu应用核心结构体
 pub struct WgpuApp {
@@ -11,6 +58,8 @@ pub struct WgpuApp {
     pub queue: wgpu::Queue,                 // 命令队列（用于提交GPU命令）
     pub config: wgpu::SurfaceConfiguration, // 表面配置（格式、尺寸等）
     pub pipeline: wgpu::RenderPipeline,     // 渲染管线（包含着色器、状态配置等）
+    pub bind_group: wgpu::BindGroup,
+    // pub buffer: wgpu::Buffer,
 }
 
 impl WgpuApp {
@@ -56,9 +105,10 @@ impl WgpuApp {
         surface.configure(&device, &config);
 
         // 6. 创建着色器模块（加载WGSL着色器）
-        let shader = device.create_shader_module(include_wgsl!("../../source/triangle.wgsl"));
+        let shader = device.create_shader_module(include_wgsl!("../../source/uniform.wgsl"));
 
         // 7. 创建渲染管线
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: None, // 使用默认管线布局
@@ -85,6 +135,32 @@ impl WgpuApp {
             cache: None,
         });
 
+        // let params = Params::random();
+
+        // let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        //     label: None,
+        //     size: bytemuck::bytes_of(&params).len() as u64,
+        //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        //     mapped_at_creation: false,
+        // });
+
+        let params = Params::new([1.0, 1.0, 0.0, 1.0], [0.5, 0.5], 0.5);
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
         Ok(Self {
             window,
             surface,
@@ -92,6 +168,7 @@ impl WgpuApp {
             queue,
             config,
             pipeline,
+            bind_group,
         })
     }
 
@@ -130,7 +207,21 @@ impl WgpuApp {
             // 5. 设置渲染管线
             pass.set_pipeline(&self.pipeline);
 
-            // 6. 绘制调用（绘制3个顶点，组成一个三角形）
+            // 错误案例
+            // for _ in 0..10 {
+            //     self.queue
+            //         .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[Params::random()]));
+            //     // 6. 设置绑定组
+            //     pass.set_bind_group(0, &self.bind_group, &[]);
+
+            //     // 7. 绘制调用（绘制三角形）
+            //     pass.draw(0..3, 0..1);
+            // }
+
+            // 6. 设置绑定组
+            pass.set_bind_group(0, &self.bind_group, &[]);
+
+            // 7. 绘制调用（绘制三角形）
             pass.draw(0..3, 0..1);
         }
 
