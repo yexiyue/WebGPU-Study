@@ -59,7 +59,7 @@ pub struct WgpuApp {
     pub config: wgpu::SurfaceConfiguration, // 表面配置（格式、尺寸等）
     pub pipeline: wgpu::RenderPipeline,     // 渲染管线（包含着色器、状态配置等）
     pub bind_group: wgpu::BindGroup,
-    // pub buffer: wgpu::Buffer,
+    pub instance_length: u32,
 }
 
 impl WgpuApp {
@@ -105,7 +105,7 @@ impl WgpuApp {
         surface.configure(&device, &config);
 
         // 6. 创建着色器模块（加载WGSL着色器）
-        let shader = device.create_shader_module(include_wgsl!("../../source/uniform.wgsl"));
+        let shader = device.create_shader_module(include_wgsl!("../../source/storage.wgsl"));
 
         // 7. 创建渲染管线
 
@@ -135,21 +135,15 @@ impl WgpuApp {
             cache: None,
         });
 
-        // let params = Params::random();
-
-        // let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        //     label: None,
-        //     size: bytemuck::bytes_of(&params).len() as u64,
-        //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-        //     mapped_at_creation: false,
-        // });
-
-        let params = Params::new([1.0, 1.0, 0.0, 1.0], [0.5, 0.5], 0.5);
+        let instance_length = 10;
+        let params_list = (0..instance_length)
+            .map(|_| Params::random())
+            .collect::<Vec<_>>();
 
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            contents: bytemuck::cast_slice(&params_list),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -169,6 +163,7 @@ impl WgpuApp {
             config,
             pipeline,
             bind_group,
+            instance_length,
         })
     }
 
@@ -207,22 +202,11 @@ impl WgpuApp {
             // 5. 设置渲染管线
             pass.set_pipeline(&self.pipeline);
 
-            // 错误案例
-            // for _ in 0..10 {
-            //     self.queue
-            //         .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[Params::random()]));
-            //     // 6. 设置绑定组
-            //     pass.set_bind_group(0, &self.bind_group, &[]);
-
-            //     // 7. 绘制调用（绘制三角形）
-            //     pass.draw(0..3, 0..1);
-            // }
-
             // 6. 设置绑定组
             pass.set_bind_group(0, &self.bind_group, &[]);
 
-            // 7. 绘制调用（绘制三角形）
-            pass.draw(0..3, 0..1);
+            // 7. 使用实例化绘制
+            pass.draw(0..3, 0..self.instance_length);
         }
 
         // 7. 提交命令到队列

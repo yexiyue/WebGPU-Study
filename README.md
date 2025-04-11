@@ -1,244 +1,62 @@
-## 四、WebGPU 基础入门——Uniform 缓冲区与内存对齐
+## 五、WebGPU 基础入门——Storage 缓冲区
 
-上一节，我们通过 `WebGPU` 创建了一个简单的三角形，并渲染到屏幕上。这节我们将学习如何使用 `Uniform` 缓冲区传递数据到着色器中。
+WebGPU中的Storage缓冲区是一种允许着色器读写、存储动态数据的缓冲区，适用于需要修改或处理大规模数据的场景（如计算着色器、粒子系统）。这一节我们将使用Storage缓冲区绘制10个不同位置颜色的三角形。
 
-### 1. Uniform 缓冲区
+### 1.创建Storage缓冲区
 
-Uniform缓冲区是一种用于存储着色器中共享的全局统一数据的机制，支持在单次绘制调用中被所有着色器阶段读取使用，但不允许写入。
-
-常见用法是传递一些不需要频繁更新的数据，比如：
-
-- 物体的变换矩阵（模型矩阵、视图矩阵、投影矩阵）。
-- 光照参数（光源位置、颜色、强度）。
-- 材质参数（漫反射系数、镜面反射系数）。
-- 纹理采样器（纹理单元、过滤模式、包裹模式）。
-- 动画参数（动画时间、帧数）。
-- 其他全局状态（如时间、帧数、视口大小等）。
-
----
-
-### 2. 实战
-
-首先，在`uniform.wgsl`中，我们先声明一个结构体。
+首先修改`uniform.wgsl`文件,将`params`变量的声明从uniform改为storage：
 
 ```wgsl
-struct Params {
-    color: vec4f,
-    offset: vec2f,
-    scale: f32,
-}
+// @group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(0) var<storage> params: Params;
 ```
 
-然后，我们声明了一个类型为该结构体的`uniform`变量。变量名为`params`，类型为`Params`。
-
-```wgsl
-@group(0) @binding(0) var<uniform> params: Params;
-```
-
-然后我们更改顶点着色器返回的内容，以使用 uniforms。
-
-```wgsl
-struct VertexOutput {
-    @builtin(position) position: vec4f,
-}
-
-@vertex
-fn vs(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var pos = array(
-        vec2f(0.0, 0.5),
-        vec2f(-0.5, -0.5),
-        vec2f(0.5, -0.5),
-    );
-
-    var output = VertexOutput(
-        vec4f(pos[vertex_index] * params.scale + params.offset, 0.0, 1.0),
-    );
-
-    return output;
-}
-
-```
-
-可以看到，我们将顶点位置乘以 scale，然后加上 offset。这样我们就可以设置三角形的大小并对其进行定位。
-
-我们还修改了片段着色器，以返回 uniforms 的颜色
-
-```wgsl
-@fragment
-fn fs() -> @location(0) vec4f {
-    return params.color;
-}
-```
-
-然后在`rs-wgpu-learn/src/lib.rs`中新建结构体。
+然后修改创建缓冲区的代码
+将`wgpu::BufferUsages::UNIFORM`改为`wgpu::BufferUsages::STORAGE`：
 
 ```rust
-#[repr(C)]
-#[derive(Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Params {
-    pub color: [f32; 4],
-    pub offset: [f32; 2],
-    pub scale: f32,
-}
-```
-
-修改`WgpuApp`添加`bind_group`字段。
-
-```rust
-pub struct WgpuApp {
-    pub window: Arc<Window>,
-    pub surface: wgpu::Surface<'static>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
-    pub pipeline: wgpu::RenderPipeline,
-    pub bind_group: wgpu::BindGroup, // 添加bind_group字段
-}
-```
-
-接着创建`Uniform`缓冲区
-
-```rust
-impl WgpuApp {
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
-        // ...
-        // 修改导入wgsl文件的路径
-        let shader = device.create_shader_module(include_wgsl!("../../source/uniform.wgsl"));
-
-        // ...
-        // 新增
-        let params = Params {
-            color: [1.0, 1.0, 0.0, 1.0],
-            offset: [0.5, 0.5],
-            scale: 0.5,
-        };
-
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-        });
-
-        Ok(Self {
-            window,
-            surface,
-            device,
-            queue,
-            config,
-            pipeline,
-            bind_group,
-        })
-    }
-}
+let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    label: Some("Uniform Buffer"),
+    contents: bytemuck::bytes_of(&params),
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+});
 
 ```
 
-然后在渲染流程中使用`bind_group`
+在typescript中同样只需要将`GPUBufferUsage.STORAGE`改成`GPUBufferUsage.STORAGE`即可：
 
-```rust
+```typescript
+// ...
 
-pub fn render(&mut self) -> Result<()> {
-    // ...
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                resolve_target: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+const defs = makeShaderDataDefinitions(storageWgsl);
+// 注意，这里也要使用 storages 而不是 uniforms
+const params = makeStructuredView(defs.storages.params);
 
-        pass.set_pipeline(&self.pipeline);
+// ...
 
-        // 设置绑定组
-        pass.set_bind_group(0, &self.bind_group, &[]);
+const buffer = device.createBuffer({
+  size: params.arrayBuffer.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+});
 
-        pass.draw(0..3, 0..1);
-    }
-
-
-    //...
-
-    Ok(())
-}
+//...
 ```
 
-然后`cargo run`运行程序，不出意外，可以看到下面报错。
+然后运行
 
-![image-20250401172210067](README.assets/image-20250401172210067.png)
+```bash
+cargo run
+```
 
-这是由于WebGPU数据内存布局导致的。建议先阅读[WebGPU Memory Layout](https://github.com/gfx-rs/wgpu/blob/master/wgpu/docs/src/memory-management.md)
+![image-20250410110548666](README.assets/image-20250410110548666.png)
 
-#### WebGPU 内存对齐规则
+经过上面的修改，我们已经成功创建了一个Storage缓冲区，并将其绑定到着色器中。细心的你可能已经发现，Storage缓冲区的使用和Uniform缓冲区几乎没有区别。它们的主要区别在于Storage缓冲区允许着色器读写数据，而Uniform缓冲区只能读取数据。另一个区别是Storage缓冲区的大小比较大，通常用于存储大量数据，而Uniform缓冲区适合存储小量数据（如变换矩阵、光照参数等）。
 
-以下是 WGSL 内存对齐的核心规则总结，按数据类型分类整理：
+### 2.实例化绘制
 
-**1. 基本类型对齐规则**
+接下来我们将探讨如何高效且易用的方式绘制多个实例。
 
-• **标量类型**：对齐值等于自身字节大小（均为 2 的幂次）。  
-  • `i32`/`u32`/`f32` → 4 字节
-  • `f16` → 2 字节
-• **向量类型**：对齐值为元素类型大小的 2 的幂次向上取整。  
-  • `vec2<f32>` → 8 字节（元素类型 4 字节 × 2）
-  • `vec3<f32>` → 16 字节（因存储缓冲区特殊规则）
-• **矩阵类型**：每列对齐到对应向量类型的对齐值。  
-  • `mat3x3<f32>` 每列 `vec3<f32>` → 对齐到 16 字节
-
-**2. 结构体对齐规则**
-
-• **成员对齐**：  
-  • 首个成员偏移量为 0，后续成员偏移量必须是其类型对齐值的整数倍。  
-  • 示例：`struct { f32 a; vec2<f32> b; }` 中，`a` 占 4 字节后需填充 4 字节，使 `b` 偏移 8 字节。
-• **整体对齐**：结构体总大小必须是其成员最大对齐值的整数倍。  
-  • 示例：若最大对齐值为 16，则结构体大小需向上填充至 16 的倍数（如 12→16）。
-
-**3. 数组对齐规则**
-
-• **元素间隔（Stride）**：等于元素类型的对齐值。  
-  • `array<vec3<f32>>` 每个元素间隔为 16 字节（12 字节数据 + 4 字节填充）。
-
----
-
-`Params` 结构体的字段及其类型如下：
-
-- **`color: [f32; 4]`**
-  - 类型：`vec4<f32>`
-  - 大小：16 字节（4 个 `f32` 每个占 4 字节）
-  - 对齐：16 字节（`vec4<f32>` 的对齐要求）
-  - 偏移量：0 字节（结构体的第一个字段，偏移量从 0 开始）
-- **`offset: [f32; 2]`**
-  - 类型：`vec2<f32>`
-  - 大小：8 字节（2 个 `f32` 每个占 4 字节）
-  - 对齐：8 字节（`vec2<f32>` 的对齐要求）
-  - 偏移量：16 字节（前一个字段 `color` 的大小为 16 字节，满足对齐要求）
-- **`scale: f32`**
-  - 类型：`f32`
-  - 大小：4 字节
-  - 对齐：4 字节（`f32` 的对齐要求）
-  - 偏移量：24 字节（前一个字段 `offset` 的大小为 8 字节，满足对齐要求）
-  - 补全： `scale` 之后需要填充 4 字节，以满足结构体整体对齐要求（最大对齐值为 16 字节）。
-
-参考下图
-
-![image-20250401172734508](README.assets/image-20250401172734508.png)
-
-然后修改`Params` 结构体，添加补全字段 `_pad_scale`，并将其对齐到 16 字节。
+初学者可能会想到通过for循环来绘制多个实例。例如：
 
 ```rust
 #[repr(C, align(16))]
@@ -262,217 +80,490 @@ impl Params {
             _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
         }
     }
+
+    // 随机生成参数
+    pub fn random() -> Self {
+        // 随机生成颜色
+        let color = [
+            rand::random_range(0.0..=1.0),
+            rand::random_range(0.0..=1.0),
+            rand::random_range(0.0..=1.0),
+            1.0,
+        ];
+        // 随机生成偏移量
+        let offset = [
+            rand::random_range(-1.0..=1.0),
+            rand::random_range(-1.0..=1.0),
+        ];
+        let scale = 0.5;
+
+        Self {
+            color,
+            offset,
+            scale,
+            _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
+        }
+    }
 }
 
-impl WgpuApp {
-    /// 异步构造函数：初始化WebGPU环境
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
 
+pub struct WgpuApp {
+    // ...
+    pub bind_group: wgpu::BindGroup,
+    pub buffer: wgpu::Buffer,// 存储数据的缓冲区
+}
+
+
+impl WgpuApp {
+    pub async fn new(window: Arc<Window>) -> Result<Self> {
         // ...
-        // 使用new函数创建Params
+
         let params = Params::new([1.0, 1.0, 0.0, 1.0], [0.5, 0.5], 0.5);
 
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
             contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Ok(Self {
+            window,
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            bind_group,
+            buffer,// 新增
+        })
+    }
+
+    /// 执行渲染操作
+    pub fn render(&mut self) -> Result<()> {
+        // 1. 获取当前帧缓冲区
+        let output = self.surface.get_current_texture()?;
+
+        // 2. 创建纹理视图
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 3. 创建命令编码器
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        // 4. 开始渲染通道
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Color::BLACK), // 用黑色清除背景
+                        store: wgpu::StoreOp::Store,             // 存储渲染结果
+                    },
+                    resolve_target: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // 5. 设置渲染管线
+            pass.set_pipeline(&self.pipeline);
+
+            // 渲染10个不同位置颜色的三角形(错误案例)
+            for _ in 0..10 {
+                self.queue
+                    .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[Params::random()]));
+                // 6. 设置绑定组
+                pass.set_bind_group(0, &self.bind_group, &[]);
+
+                // 7. 绘制调用（绘制三角形）
+                pass.draw(0..3, 0..1);
+            }
+
+            // // 6. 设置绑定组
+            // pass.set_bind_group(0, &self.bind_group, &[]);
+
+            // // 7. 绘制调用（绘制三角形）
+            // pass.draw(0..3, 0..1);
+        }
+
+        // 7. 提交命令到队列
+        let command_buffer = encoder.finish();
+        self.queue.submit(std::iter::once(command_buffer));
+
+        // 8. 呈现渲染结果
+        output.present();
+
+        Ok(())
+    }
+}
+
+```
+
+然后运行
+
+```bash
+cargo run
+```
+
+![20250411165614_rec_](README.assets/20250411165614_rec_.gif)
+
+观察可以发现屏幕中的三角形一直在闪烁，这是因为我们在render函数中绘制三角形的Params参数是随机生成的，每次绘制三角形时都在重新生成参数，导致三角形的颜色和位置不断变化。我们可以在create时生成10个随机的Params参数，然后在render函数中将这些参数传递给着色器进行绘制。这样就可以避免每次绘制都重新生成参数。
+
+```rust
+
+// Wgpu应用核心结构体
+pub struct WgpuApp {
+    // ...
+    pub buffer: wgpu::Buffer,
+    pub params_list: Vec<Params>,//新增
+}
+
+impl WgpuApp {
+    pub async fn new(window: Arc<Window>) -> Result<Self> {
+        // ...
+
+        let params = Params::new([1.0, 1.0, 0.0, 1.0], [0.5, 0.5], 0.5);
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        let params_list = (0..10).map(|_| Params::random()).collect::<Vec<_>>();
+
+        Ok(Self {
+            //...
+            buffer,
+            params_list,
+        })
+    }
+
+    /// 执行渲染操作
+    pub fn render(&mut self) -> Result<()> {
+        // 1. 获取当前帧缓冲区
+        let output = self.surface.get_current_texture()?;
+
+        // 2. 创建纹理视图
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 3. 创建命令编码器
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        // 4. 开始渲染通道
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Color::BLACK), // 用黑色清除背景
+                        store: wgpu::StoreOp::Store,             // 存储渲染结果
+                    },
+                    resolve_target: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // 5. 设置渲染管线
+            pass.set_pipeline(&self.pipeline);
+
+            // 错误案例
+            for param in &self.params_list {
+                self.queue
+                    .write_buffer(&self.buffer, 0, bytemuck::bytes_of(param));
+                // 6. 设置绑定组
+                pass.set_bind_group(0, &self.bind_group, &[]);
+
+                // 7. 绘制调用（绘制三角形）
+                pass.draw(0..3, 0..1);
+            }
+
+            // // 6. 设置绑定组
+            // pass.set_bind_group(0, &self.bind_group, &[]);
+
+            // // 7. 绘制调用（绘制三角形）
+            // pass.draw(0..3, 0..1);
+        }
+
+        // 7. 提交命令到队列
+        let command_buffer = encoder.finish();
+        self.queue.submit(std::iter::once(command_buffer));
+
+        // 8. 呈现渲染结果
+        output.present();
+
+        Ok(())
+    }
+}
+
+```
+
+![image-20250411170822350](README.assets/image-20250411170822350.png)
+
+当我们运行程序时，发现屏幕上只有一个三角形，这是因为queue.xxx 函数发生在 queue 中，而 pass.xxx 函数只是对命令缓冲区中的命令进行编码。当我们使用命令缓冲区实际调用submit时，缓冲区中唯一的内容就是我们最后写入的值。
+
+因此我们需要在每次绘制三角形时都使用不同的绑定组，这样才能保证每个三角形都有自己的参数。
+
+```rust
+// Wgpu应用核心结构体
+pub struct WgpuApp {
+    pub window: Arc<Window>,                // 窗口对象
+    pub surface: wgpu::Surface<'static>,    // GPU表面（用于绘制到窗口）
+    pub device: wgpu::Device,               // GPU设备抽象
+    pub queue: wgpu::Queue,                 // 命令队列（用于提交GPU命令）
+    pub config: wgpu::SurfaceConfiguration, // 表面配置（格式、尺寸等）
+    pub pipeline: wgpu::RenderPipeline,     // 渲染管线（包含着色器、状态配置等）
+    // pub bind_group: wgpu::BindGroup, // 删除
+    // pub buffer: wgpu::Buffer, // 删除
+    // pub params_list: Vec<Params>, // 删除
+    pub bind_groups: Vec<wgpu::BindGroup>,// 新增
+}
+
+impl WgpuApp {
+    /// 异步构造函数：初始化WebGPU环境
+    pub async fn new(window: Arc<Window>) -> Result<Self> {
+        // ...
+
+        let bind_groups = (0..10)
+            .map(|_| {
+                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Uniform Buffer"),
+                    contents: bytemuck::bytes_of(&Params::random()),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &pipeline.get_bind_group_layout(0),
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(Self {
+            window,
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            // bind_group,
+            // buffer,
+            // params_list,
+            bind_groups,
+        })
+    }
+
+    /// 执行渲染操作
+    pub fn render(&mut self) -> Result<()> {
+        // ...
+
+        // 4. 开始渲染通道
+        {
+
+            // ...
+
+            for bind_group in &self.bind_groups {
+                // self.queue
+                //     .write_buffer(&self.buffer, 0, bytemuck::bytes_of(param));
+                // 6. 设置绑定组
+                pass.set_bind_group(0, bind_group, &[]);
+
+                // 7. 绘制调用（绘制三角形）
+                pass.draw(0..3, 0..1);
+            }
+        }
+
+        // ...
+
+        Ok(())
+    }
+}
+```
+
+然后运行，可以看到屏幕上有10个不同位置颜色的三角形。
+
+![image-20250411172040413](README.assets/image-20250411172040413.png)
+
+呼，终于画出了10个三角形。但是这个方法不够优雅，有没有更好的方法呢？
+有的，兄弟有的！我们可以使用实例化绘制来绘制多个实例。实例化绘制（Instanced Drawing）是一种技术，它允许通过单次绘制命令来渲染同一个几何体的多个实例。每个实例可以应用不同的变换或其他属性，从而高效地绘制大量相似但不完全相同的物体。这种方法能够显著减少API调用的开销，并提高渲染性能。
+
+接下来我们具体看看如何使用实例化绘制来绘制多个三角形。
+首先修改`wgsl`文件：
+
+```wgsl
+struct Params {
+    color: vec4f,
+    offset: vec2f,
+    scale: f32,
+}
+
+// 将原来的params改为params_list，并将其声明为数组
+@group(0) @binding(0) var<storage> params_list: array<Params>;
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    // 新增color属性，片段着色器中访问不到 @builtin(instance_index)
+    @location(0) color: vec4f,
+}
+
+@vertex
+fn vs(@builtin(vertex_index) vertex_index: u32,
+// 新增参数，表示实例索引
+// 这里的instance_index是一个内置变量，表示当前实例的索引
+@builtin(instance_index) instance_index: u32) -> VertexOutput {
+    var pos = array(
+        vec2f(0.0, 0.5),
+        vec2f(-0.5, -0.5),
+        vec2f(0.5, -0.5),
+    );
+
+    // 使用instance_index来选择params_list中的参数
+    let params = params_list[instance_index];
+
+    var output = VertexOutput(
+        vec4f(pos[vertex_index] * params.scale + params.offset, 0.0, 1.0),
+        params.color,
+    );
+
+    return output;
+}
+
+
+@fragment
+fn fs(vsOutput: VertexOutput) -> @location(0) vec4f {
+    return vsOutput.color;
+}
+
+```
+
+然后修改`WgpuApp::new`函数，创建一个包含10个实例的缓冲区：
+
+```rust
+// Wgpu应用核心结构体
+pub struct WgpuApp {
+    pub window: Arc<Window>,                // 窗口对象
+    pub surface: wgpu::Surface<'static>,    // GPU表面（用于绘制到窗口）
+    pub device: wgpu::Device,               // GPU设备抽象
+    pub queue: wgpu::Queue,                 // 命令队列（用于提交GPU命令）
+    pub config: wgpu::SurfaceConfiguration, // 表面配置（格式、尺寸等）
+    pub pipeline: wgpu::RenderPipeline,     // 渲染管线（包含着色器、状态配置等）
+    pub bind_group: wgpu::BindGroup,
+    pub instance_length: u32,
+}
+
+impl WgpuApp {
+    /// 异步构造函数：初始化WebGPU环境
+    pub async fn new(window: Arc<Window>) -> Result<Self> {
+        // ...
+
+        let instance_length = 10;
+        let params_list = (0..instance_length)
+            .map(|_| Params::random())
+            .collect::<Vec<_>>();
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::cast_slice(&params_list),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Ok(Self {
+            window,
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            bind_group,
+            instance_length,
+        })
+    }
+
+    /// 执行渲染操作
+    pub fn render(&mut self) -> Result<()> {
+        // ...
+        // 4. 开始渲染通道
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Color::BLACK), // 用黑色清除背景
+                        store: wgpu::StoreOp::Store,             // 存储渲染结果
+                    },
+                    resolve_target: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // 5. 设置渲染管线
+            pass.set_pipeline(&self.pipeline);
+
+            // 6. 设置绑定组
+            pass.set_bind_group(0, &self.bind_group, &[]);
+
+            // 7. 使用实例化绘制
+            pass.draw(0..3, 0..self.instance_length); // 实例范围是0..10
+        }
 
         // ...
     }
-
 }
 
 ```
 
-然后`cargo run`运行，不出意外，可以得到一个黄色的三角形。
+然后运行，可以看到屏幕上有10个不同位置颜色的三角形。这里就不截图了，大家可以自己运行看看效果。
 
-![image-20250401180405489](README.assets/image-20250401180405489.png)
+最后，我们来总结一下实例化绘制的使用方法：
 
-这时候，可能有同学会问了，博主博主，你的内存布局计算太难了，有没有更简单又好用的方法。
-有的，兄弟有的，经过我的调研，发现一个非常好用的库叫[wgsl-bindgen](https://crates.io/crates/wgsl_bindgen)。有兴趣的可以查看文档，这里就不详细介绍了。
-
-接下来介绍在typescript中使用`Uniform`缓冲区。
-首先安装依赖：
-
-```bash
-pnpm add webgpu-utils
-```
-
-然后创建`Uniform`缓冲区以及绑定组，最后在渲染流程中使用绑定组。
-逻辑与上面rust版本一样，这里就不再赘述了。
-具体代码如下：
-
-```ts
-import "./style.css";
-import uniformWgsl from "../../source/uniform.wgsl?raw";
-import { makeShaderDataDefinitions, makeStructuredView } from "webgpu-utils";
-
-class WebGPUApp {
-  constructor(
-    public device: GPUDevice,
-    public queue: GPUQueue,
-    public canvas: HTMLCanvasElement,
-    public ctx: GPUCanvasContext,
-    public pipeline: GPURenderPipeline,
-    public bindGroup: GPUBindGroup
-  ) {
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const canvas = entry.target as HTMLCanvasElement;
-        const width = entry.contentBoxSize[0].inlineSize;
-        const height = entry.contentBoxSize[0].blockSize;
-        canvas.width = Math.min(width, device.limits.maxTextureDimension2D);
-        canvas.height = Math.min(height, device.limits.maxTextureDimension2D);
-      }
-    });
-    observer.observe(canvas);
-  }
-
-  public static async create() {
-    const adapter = await navigator.gpu.requestAdapter();
-    // 请求GPU设备
-    const device = await adapter?.requestDevice();
-    if (!device) {
-      throw new Error("Couldn't request WebGPU device");
-    }
-
-    // 创建画布元素
-    const canvas = document.createElement("canvas");
-    document.querySelector("#app")?.appendChild(canvas);
-
-    // 获取WebGPU上下文
-    const ctx = canvas.getContext("webgpu");
-    if (!ctx) {
-      throw new Error("Couldn't get WebGPU context");
-    }
-
-    // 获取首选画布格式
-    const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
-
-    // 配置画布上下文
-    ctx.configure({
-      device,
-      format: preferredFormat,
-    });
-
-    // 创建着色器模块
-    const shader = device.createShaderModule({
-      code: uniformWgsl, // 加载 WGSL 着色器代码
-    });
-
-    // 创建渲染管线
-    const pipeline = device.createRenderPipeline({
-      layout: "auto",
-      vertex: {
-        module: shader,
-        entryPoint: "vs", // 顶点着色器入口
-      },
-      fragment: {
-        module: shader,
-        entryPoint: "fs", // 片元着色器入口
-        targets: [
-          {
-            format: preferredFormat, // 渲染目标格式
-          },
-        ],
-      },
-    });
-
-    // 使用工具函数解析着色器中的 uniform 数据定义
-    const defs = makeShaderDataDefinitions(uniformWgsl);
-    const params = makeStructuredView(defs.uniforms.params);
-
-    // 设置 uniform 数据的初始值
-    params.set({
-      color: [1.0, 1.0, 0, 1], // 设置颜色为黄色
-      scale: 0.5, // 缩放因子
-      offset: [0.5, 0.5], // 偏移量
-    });
-
-    // 创建 GPU 缓冲区以存储 uniform 数据
-    const buffer = device.createBuffer({
-      size: params.arrayBuffer.byteLength, // 缓冲区大小与 uniform 数据大小一致
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
-    });
-
-    // 将 uniform 数据写入缓冲区
-    device.queue.writeBuffer(buffer, 0, params.arrayBuffer);
-
-    // 创建绑定组，将 uniform 缓冲区绑定到着色器
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0), // 获取绑定组布局
-      entries: [
-        {
-          binding: 0, // 对应着色器中的 binding 位置
-          resource: {
-            buffer, // 绑定 uniform 缓冲区
-          },
-        },
-      ],
-    });
-
-    return new WebGPUApp(
-      device,
-      device.queue,
-      canvas,
-      ctx,
-      pipeline,
-      bindGroup
-    );
-  }
-
-  public render() {
-    const { device, ctx, pipeline, bindGroup } = this;
-    // 创建命令编码器（用于记录一系列GPU执行命令）
-    const encoder = device.createCommandEncoder();
-
-    // 获取当前Canvas的输出纹理（WebGPU渲染目标）
-    const output = ctx.getCurrentTexture();
-    const view = output.createView(); // 创建纹理视图用于渲染目标绑定
-
-    // 开始渲染通道配置
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        // 配置颜色附件数组（此处仅使用一个主颜色目标）
-        {
-          view, // 绑定之前创建的纹理视图作为渲染目标
-          clearValue: { r: 0, g: 0, b: 0, a: 1 }, // 设置清除颜色为黑色（RGB 0,0,0）
-          loadOp: "clear", // 渲染前清除颜色缓冲区
-          storeOp: "store", // 渲染完成后将结果存储到颜色缓冲区
-        },
-      ],
-    });
-
-    // 绑定当前渲染管线配置（顶点/片元着色器等）
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup); // 将 uniform 数据绑定到渲染管线
-    // 执行绘制命令：绘制3个顶点构成的三角形
-    // 参数3表示顶点数量（与顶点着色器中数组长度一致）
-    pass.draw(3);
-
-    // 结束当前渲染通道的配置
-    pass.end();
-
-    // 生成最终的命令缓冲区（包含所有已记录的渲染指令）
-    const commandBuffer = encoder.finish(); // 修正拼写错误：commanderBuffer → commandBuffer
-    device.queue.submit([commandBuffer]); // 将命令提交到GPU队列执行
-  }
-}
-
-async function main() {
-  const app = await WebGPUApp.create();
-
-  // 使用 requestAnimationFrame 实现持续渲染
-  const renderLoop = () => {
-    app.render();
-    requestAnimationFrame(renderLoop);
-  };
-
-  requestAnimationFrame(renderLoop);
-}
-
-// 调用主函数
-main();
-
-```
+1. 在着色器中定义一个包含实例参数的结构体，并将其声明为数组。
+2. 在顶点着色器中使用`@builtin(instance_index)`来获取当前实例的索引，并根据索引从数组中获取实例参数。
+3. 在渲染管线中设置绑定组，并在绘制调用中指定实例的数量。
+4. 在CPU端创建一个包含实例参数的缓冲区，并将其绑定到渲染管线中。
+5. 在绘制调用中使用实例化绘制来绘制多个实例。

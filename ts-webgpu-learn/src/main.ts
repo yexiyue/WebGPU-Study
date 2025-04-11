@@ -1,5 +1,5 @@
 import "./style.css";
-import uniformWgsl from "../../source/uniform.wgsl?raw";
+import storageWgsl from "../../source/storage.wgsl?raw";
 import { makeShaderDataDefinitions, makeStructuredView } from "webgpu-utils";
 
 class WebGPUApp {
@@ -52,7 +52,7 @@ class WebGPUApp {
 
     // 创建着色器模块
     const shader = device.createShaderModule({
-      code: uniformWgsl, // 加载 WGSL 着色器代码
+      code: storageWgsl, // 加载 WGSL 着色器代码
     });
 
     // 创建渲染管线
@@ -74,8 +74,8 @@ class WebGPUApp {
     });
 
     // 使用工具函数解析着色器中的 uniform 数据定义
-    const defs = makeShaderDataDefinitions(uniformWgsl);
-    const params = makeStructuredView(defs.uniforms.params);
+    const defs = makeShaderDataDefinitions(storageWgsl);
+    const params = makeStructuredView(defs.storages.params);
 
     // 设置 uniform 数据的初始值
     params.set({
@@ -87,7 +87,7 @@ class WebGPUApp {
     // 创建 GPU 缓冲区以存储 uniform 数据
     const buffer = device.createBuffer({
       size: params.arrayBuffer.byteLength, // 缓冲区大小与 uniform 数据大小一致
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
     });
 
     // 将 uniform 数据写入缓冲区
