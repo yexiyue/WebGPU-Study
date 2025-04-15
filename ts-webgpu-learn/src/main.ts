@@ -1,6 +1,5 @@
 import "./style.css";
-import storageWgsl from "../../source/storage.wgsl?raw";
-import { makeShaderDataDefinitions, makeStructuredView } from "webgpu-utils";
+import storageWgsl from "../../source/vertex.wgsl?raw";
 
 class WebGPUApp {
   constructor(
@@ -9,7 +8,9 @@ class WebGPUApp {
     public canvas: HTMLCanvasElement,
     public ctx: GPUCanvasContext,
     public pipeline: GPURenderPipeline,
-    public bindGroup: GPUBindGroup
+    public vertex_buffer: GPUBuffer,
+    public instance_buffer: GPUBuffer,
+    public index_buffer: GPUBuffer
   ) {
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -61,6 +62,7 @@ class WebGPUApp {
       vertex: {
         module: shader,
         entryPoint: "vs", // 顶点着色器入口
+        buffers: [Vertex.LAYOUT, Params.LAYOUT],
       },
       fragment: {
         module: shader,
@@ -72,39 +74,37 @@ class WebGPUApp {
         ],
       },
     });
-
-    // 使用工具函数解析着色器中的 uniform 数据定义
-    const defs = makeShaderDataDefinitions(storageWgsl);
-    const params = makeStructuredView(defs.storages.params);
-
-    // 设置 uniform 数据的初始值
-    params.set({
-      color: [1.0, 1.0, 0, 1], // 设置颜色为黄色
-      scale: 0.5, // 缩放因子
-      offset: [0.5, 0.5], // 偏移量
-    });
+    const vertexData = new Float32Array(
+      Vertex.SQUARE.flatMap((v) => v.position)
+    );
 
     // 创建 GPU 缓冲区以存储 uniform 数据
-    const buffer = device.createBuffer({
-      size: params.arrayBuffer.byteLength, // 缓冲区大小与 uniform 数据大小一致
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
+    const vertexBuffer = device.createBuffer({
+      size: vertexData.byteLength, // 缓冲区大小与 uniform 数据大小一致
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, // 用作 uniform 缓冲区并支持写入
     });
 
     // 将 uniform 数据写入缓冲区
-    device.queue.writeBuffer(buffer, 0, params.arrayBuffer);
+    device.queue.writeBuffer(vertexBuffer, 0, vertexData);
 
-    // 创建绑定组，将 uniform 缓冲区绑定到着色器
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0), // 获取绑定组布局
-      entries: [
-        {
-          binding: 0, // 对应着色器中的 binding 位置
-          resource: {
-            buffer, // 绑定 uniform 缓冲区
-          },
-        },
-      ],
+    const indexBuffer = device.createBuffer({
+      size: Vertex.SQUARE_INDICES.byteLength,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
     });
+
+    device.queue.writeBuffer(indexBuffer, 0, Vertex.SQUARE_INDICES);
+
+    const instanceData = new Float32Array(
+      Array.from({ length: 10 })
+        .map(() => Params.random())
+        .flatMap((p) => [...p.color, ...p.offset, p.scale])
+    );
+
+    const instanceBuffer = device.createBuffer({
+      size: instanceData.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(instanceBuffer, 0, instanceData);
 
     return new WebGPUApp(
       device,
@@ -112,12 +112,14 @@ class WebGPUApp {
       canvas,
       ctx,
       pipeline,
-      bindGroup
+      vertexBuffer,
+      instanceBuffer,
+      indexBuffer
     );
   }
 
   public render() {
-    const { device, ctx, pipeline, bindGroup } = this;
+    const { device, ctx, pipeline } = this;
     // 创建命令编码器（用于记录一系列GPU执行命令）
     const encoder = device.createCommandEncoder();
 
@@ -140,10 +142,11 @@ class WebGPUApp {
 
     // 绑定当前渲染管线配置（顶点/片元着色器等）
     pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup); // 将 uniform 数据绑定到渲染管线
-    // 执行绘制命令：绘制3个顶点构成的三角形
-    // 参数3表示顶点数量（与顶点着色器中数组长度一致）
-    pass.draw(3);
+
+    pass.setVertexBuffer(0, this.vertex_buffer); // 绑定顶点缓冲区
+    pass.setVertexBuffer(1, this.instance_buffer); // 绑定实例缓冲区
+    pass.setIndexBuffer(this.index_buffer, "uint16"); // 绑定索引缓冲区
+    pass.drawIndexed(Vertex.SQUARE_INDICES.length, 10); // 绘制索引缓冲区中的图形
 
     // 结束当前渲染通道的配置
     pass.end();
@@ -168,3 +171,77 @@ async function main() {
 
 // 调用主函数
 main();
+
+class Vertex {
+  constructor(public position: [number, number]) {}
+
+  static LAYOUT: GPUVertexBufferLayout = {
+    arrayStride: 2 * 4,
+    stepMode: "vertex",
+    attributes: [
+      {
+        shaderLocation: 0,
+        offset: 0,
+        format: "float32x2",
+      },
+    ],
+  };
+
+  static SQUARE: Vertex[] = [
+    new Vertex([-0.5, -0.5]),
+    new Vertex([0.5, -0.5]),
+    new Vertex([-0.5, 0.5]),
+    new Vertex([0.5, 0.5]),
+  ];
+
+  static SQUARE_INDICES: Uint16Array = new Uint16Array([
+    0,
+    1,
+    2, // Triangle 1
+    2,
+    1,
+    3, // Triangle 2
+  ]);
+}
+
+class Params {
+  constructor(
+    public color: [number, number, number, number],
+    public offset: [number, number],
+    public scale: number
+  ) {}
+
+  static LAYOUT: GPUVertexBufferLayout = {
+    arrayStride: 4 * 7,
+    stepMode: "instance",
+    attributes: [
+      {
+        shaderLocation: 1,
+        offset: 0,
+        format: "float32x4",
+      },
+      {
+        shaderLocation: 2,
+        offset: 4 * 4,
+        format: "float32x2",
+      },
+      {
+        shaderLocation: 3,
+        offset: 6 * 4,
+        format: "float32",
+      },
+    ],
+  };
+
+  static random() {
+    return new Params(
+      [random(0, 1), random(0, 1), random(0, 1), 1],
+      [random(-1, 1), random(-1, 1)],
+      0.5
+    );
+  }
+}
+
+function random(start: number, end: number) {
+  return Math.random() * (end - start) + start;
+}
