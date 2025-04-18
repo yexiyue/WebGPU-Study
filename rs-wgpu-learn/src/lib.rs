@@ -1,53 +1,40 @@
 use anyhow::Result;
+use egui_wgpu::ScreenDescriptor;
 use std::sync::Arc;
-use wgpu::{Color, include_wgsl, util::DeviceExt};
+use wgpu::{Color, include_wgsl};
 use winit::window::Window;
+pub mod controls;
+pub mod egui_render;
 
-#[repr(C, align(16))]
-#[derive(Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Params {
-    /// size: 16, offset: 0, type: `vec4<f32>`
-    pub color: [f32; 4],
-    /// size: 8, offset: 16 (2*8), type: `vec2<f32>`
-    pub offset: [f32; 2],
-    /// size: 4, offset: 24 (4*6), type: `f32`
-    pub scale: f32,
-    pub _pad_scale: [u8; 0x8 - core::mem::size_of::<f32>()],
-}
+fn gen_texture_data() -> Vec<u8> {
+    let red = [255u8, 0, 0, 255]; // 红色
+    let yellow = [255, 255, 0, 255]; // 黄色
+    let blue = [0, 0, 255, 255]; // 蓝色
 
-impl Params {
-    pub const fn new(color: [f32; 4], offset: [f32; 2], scale: f32) -> Self {
-        Self {
-            color,
-            offset,
-            scale,
-            _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
-        }
-    }
+    // // 定义二维纹理数据结构
+    // let rows = [
+    //     [blue, red, red, red, red],         // 第一行
+    //     [red, yellow, yellow, yellow, red], // 第二行
+    //     [red, yellow, red, red, red],       // 第三行
+    //     [red, yellow, yellow, red, red],    // 第四行
+    //     [red, yellow, red, red, red],       // 第五行
+    //     [red, yellow, red, red, red],       // 第六行
+    //     [red, red, red, red, red],          // 第七行
+    // ];
 
-    pub fn random() -> Self {
-        // 随机生成颜色
-        let color = [
-            rand::random_range(0.0..=1.0),
-            rand::random_range(0.0..=1.0),
-            rand::random_range(0.0..=1.0),
-            1.0,
-        ];
-        // 随机生成偏移量
-        let offset = [
-            rand::random_range(-1.0..=1.0),
-            rand::random_range(-1.0..=1.0),
-        ];
-        // 随机生成缩放因子
-        let scale = 0.5;
+    // 定义二维纹理数据结构并翻转
+    let rows = [
+        [red, red, red, red, red],          // 第七行
+        [red, yellow, red, red, red],       // 第六行
+        [red, yellow, red, red, red],       // 第五行
+        [red, yellow, yellow, red, red],    // 第四行
+        [red, yellow, red, red, red],       // 第三行
+        [red, yellow, yellow, yellow, red], // 第二行
+        [blue, red, red, red, red],         // 第一行
+    ];
 
-        Self {
-            color,
-            offset,
-            scale,
-            _pad_scale: [0; 0x8 - core::mem::size_of::<f32>()],
-        }
-    }
+    // 将二维数组展平为一维字节数组
+    rows.iter().flatten().flatten().copied().collect()
 }
 
 // Wgpu应用核心结构体
@@ -59,7 +46,9 @@ pub struct WgpuApp {
     pub config: wgpu::SurfaceConfiguration, // 表面配置（格式、尺寸等）
     pub pipeline: wgpu::RenderPipeline,     // 渲染管线（包含着色器、状态配置等）
     pub bind_group: wgpu::BindGroup,
-    pub instance_length: u32,
+    pub texture: wgpu::Texture,
+    pub egui_renderer: egui_render::EguiRender, // Egui渲染器
+    pub controls: controls::Controls,
 }
 
 impl WgpuApp {
@@ -104,8 +93,10 @@ impl WgpuApp {
             .unwrap();
         surface.configure(&device, &config);
 
+        let egui_render = egui_render::EguiRender::new(&device, config.format, None, 1, &window);
+
         // 6. 创建着色器模块（加载WGSL着色器）
-        let shader = device.create_shader_module(include_wgsl!("../../source/storage.wgsl"));
+        let shader = device.create_shader_module(include_wgsl!("../../source/texture.wgsl"));
 
         // 7. 创建渲染管线
 
@@ -135,24 +126,62 @@ impl WgpuApp {
             cache: None,
         });
 
-        let instance_length = 10;
-        let params_list = (0..instance_length)
-            .map(|_| Params::random())
-            .collect::<Vec<_>>();
+        let texture_data = gen_texture_data();
+        let texture_size = wgpu::Extent3d {
+            width: 5,
+            height: 7,
+            ..Default::default()
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("texture"),
+            size: texture_size,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            view_formats: &[],
+        });
 
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
-            contents: bytemuck::cast_slice(&params_list),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfoBase {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texture_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(texture_size.width * 4),
+                rows_per_image: None,
+            },
+            texture_size,
+        );
+        let controls = controls::Controls::new();
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: controls.address_mode_u,
+            address_mode_v: controls.address_mode_v,
+            mag_filter: controls.mag_filter,
+            ..Default::default()
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(
+                        &texture.create_view(&Default::default()),
+                    ),
+                },
+            ],
         });
 
         Ok(Self {
@@ -163,7 +192,9 @@ impl WgpuApp {
             config,
             pipeline,
             bind_group,
-            instance_length,
+            egui_renderer: egui_render,
+            texture,
+            controls,
         })
     }
 
@@ -181,6 +212,11 @@ impl WgpuApp {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: self.window.as_ref().scale_factor() as f32,
+        };
 
         // 4. 开始渲染通道
         {
@@ -206,7 +242,48 @@ impl WgpuApp {
             pass.set_bind_group(0, &self.bind_group, &[]);
 
             // 7. 使用实例化绘制
-            pass.draw(0..3, 0..self.instance_length);
+            pass.draw(0..6, 0..1);
+        }
+
+        {
+            self.egui_renderer.begin_frame(&self.window);
+
+            self.controls
+                .render(self.egui_renderer.context(), |controls| {
+                    let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+                        address_mode_u: controls.address_mode_u,
+                        address_mode_v: controls.address_mode_v,
+                        mag_filter: controls.mag_filter,
+                        ..Default::default()
+                    });
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &self.pipeline.get_bind_group_layout(0),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::Sampler(&sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.texture.create_view(&Default::default()),
+                                ),
+                            },
+                        ],
+                    });
+                    self.bind_group = bind_group;
+                });
+
+            self.egui_renderer.end_frame_and_draw(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.window,
+                &view,
+                screen_descriptor,
+            );
         }
 
         // 7. 提交命令到队列

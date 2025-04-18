@@ -62,11 +62,14 @@ impl ApplicationHandler for App {
         event: winit::event::WindowEvent,
     ) {
         let mut app_guard = self.wgpu_app.lock();
+
         // 确保WGPU应用已初始化
         if app_guard.is_none() {
             return;
         }
         let app = app_guard.as_mut().unwrap();
+
+        app.egui_renderer.handle_input(&app.window, &event);
 
         match event {
             // 关闭窗口请求
