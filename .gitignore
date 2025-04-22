@@ -7,3 +7,4 @@ dist/
 # Rust project
 target/
 .vscode/
+.DS_Store
