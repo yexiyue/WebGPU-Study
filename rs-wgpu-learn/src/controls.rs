@@ -3,6 +3,7 @@ pub struct Controls {
     pub mag_filter: wgpu::FilterMode,
     pub address_mode_u: wgpu::AddressMode,
     pub address_mode_v: wgpu::AddressMode,
+    pub image_url: String,
 }
 
 impl Controls {
@@ -11,10 +12,15 @@ impl Controls {
             mag_filter: wgpu::FilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
+            image_url: String::new(),
         }
     }
 
-    pub fn render(&mut self, ctx: &egui::Context, mut on_change: impl FnMut(Self)) {
+    pub fn render(
+        &mut self,
+        ctx: &egui::Context,
+        mut on_change: impl FnMut(Self),
+    ) {
         egui::Window::new("Controls").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Mag Filter");
@@ -44,7 +50,7 @@ impl Controls {
                         }
                     })
             });
-
+            ui.add_space(16.0);
             ui.horizontal(|ui| {
                 ui.label("Address Mode U");
                 egui::ComboBox::from_id_salt("address_mode_u")
@@ -73,7 +79,7 @@ impl Controls {
                         }
                     })
             });
-
+            ui.add_space(16.0);
             ui.horizontal(|ui| {
                 ui.label("Address Mode V");
 
@@ -103,6 +109,17 @@ impl Controls {
                         }
                     })
             });
+            ui.add_space(16.0);
+            ui.vertical(|ui| {
+                ui.label("Image URL");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.image_url);
+                    if ui.button("Load").clicked() {
+                        on_change(self.clone());
+                    }
+                });
+            })
         });
     }
 }

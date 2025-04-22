@@ -1,17 +1,17 @@
 use egui::Context;
-use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use egui_winit::State;
+use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-pub struct EguiRender {
+pub struct EguiRenderer {
     pub state: State,
     pub renderer: Renderer,
     pub frame_started: bool,
 }
 
-impl EguiRender {
+impl EguiRenderer {
     pub fn context(&self) -> &egui::Context {
         self.state.egui_ctx()
     }
