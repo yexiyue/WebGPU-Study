@@ -53,6 +53,7 @@ pub struct WgpuApp {
     pub egui_renderer: egui_render::EguiRenderer, // Egui渲染器
     pub controls: controls::Controls,
     pub scale_bind_group: wgpu::BindGroup,
+    pub scale_buffer: wgpu::Buffer,
     pub image_dimensions: [f32; 2],
 }
 
@@ -216,6 +217,7 @@ impl WgpuApp {
             texture,
             controls,
             scale_bind_group,
+            scale_buffer,
             image_dimensions: [5.0, 7.0],
         })
     }
@@ -268,39 +270,33 @@ impl WgpuApp {
         }
 
         {
+            // 开始Egui帧渲染
             self.egui_renderer.begin_frame(&self.window);
 
+            // 渲染控件并处理用户交互
             self.controls
                 .render(self.egui_renderer.context(), |controls| {
+                    // 检查控件中是否有新的图像URL
                     let url = controls.image_url;
                     if !url.is_empty() {
+                        // 如果URL不为空，尝试加载图像数据
                         if let Ok(image) = utils::load_image_data(&url) {
                             log::info!("Loaded image from URL: {}", url);
                             let (width, height) = image.dimensions();
                             self.image_dimensions = [width as f32, height as f32];
 
+                            // 计算缩放比例并更新缓冲区
                             let scale = calc_scale(
                                 self.image_dimensions,
                                 [self.config.width as f32, self.config.height as f32],
                             );
-                            let scale_buffer =
-                                self.device
-                                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                        label: Some("Scale Buffer"),
-                                        contents: bytemuck::cast_slice(&scale),
-                                        usage: wgpu::BufferUsages::UNIFORM
-                                            | wgpu::BufferUsages::COPY_DST,
-                                    });
-                            self.scale_bind_group =
-                                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                    label: None,
-                                    layout: &self.pipeline.get_bind_group_layout(1),
-                                    entries: &[wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: scale_buffer.as_entire_binding(),
-                                    }],
-                                });
+                            self.queue.write_buffer(
+                                &self.scale_buffer,
+                                0,
+                                bytemuck::cast_slice(&scale),
+                            );
 
+                            // 创建新的纹理并加载图像数据
                             let texture_size = wgpu::Extent3d {
                                 width,
                                 height,
@@ -308,39 +304,27 @@ impl WgpuApp {
                             };
                             let texture_data = image.flipv().to_rgba8().to_vec();
 
-                            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                                label: Some("net_texture"),
-                                size: texture_size,
-                                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                                    | wgpu::TextureUsages::COPY_DST
-                                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                                mip_level_count: 1,
-                                sample_count: 1,
-                                dimension: wgpu::TextureDimension::D2,
-                                view_formats: &[],
-                            });
-
-                            self.queue.write_texture(
-                                wgpu::TexelCopyTextureInfoBase {
-                                    texture: &texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
+                            self.texture = self.device.create_texture_with_data(
+                                &self.queue,
+                                &wgpu::TextureDescriptor {
+                                    label: Some("net_texture"),
+                                    size: texture_size,
+                                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                        | wgpu::TextureUsages::COPY_DST
+                                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                    mip_level_count: 1,
+                                    sample_count: 1,
+                                    dimension: wgpu::TextureDimension::D2,
+                                    view_formats: &[],
                                 },
-                                &bytemuck::cast_slice(&texture_data),
-                                wgpu::TexelCopyBufferLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(texture_size.width * 4),
-                                    rows_per_image: None,
-                                },
-                                texture_size,
+                                wgpu::util::TextureDataOrder::MipMajor,
+                                &texture_data,
                             );
-
-                            self.texture = texture;
                         }
                     }
 
+                    // 根据控件设置创建采样器
                     let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
                         address_mode_u: controls.address_mode_u,
                         address_mode_v: controls.address_mode_v,
@@ -348,6 +332,7 @@ impl WgpuApp {
                         ..Default::default()
                     });
 
+                    // 创建绑定组并更新
                     let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &self.pipeline.get_bind_group_layout(0),
@@ -367,6 +352,7 @@ impl WgpuApp {
                     self.bind_group = bind_group;
                 });
 
+            // 结束Egui帧并绘制
             self.egui_renderer.end_frame_and_draw(
                 &self.device,
                 &self.queue,
@@ -398,20 +384,7 @@ impl WgpuApp {
             self.image_dimensions,
             [self.config.width as f32, self.config.height as f32],
         );
-        let scale_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Scale Buffer"),
-                contents: bytemuck::cast_slice(&scale),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-        self.scale_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.pipeline.get_bind_group_layout(1),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scale_buffer.as_entire_binding(),
-            }],
-        });
+        self.queue
+            .write_buffer(&self.scale_buffer, 0, bytemuck::cast_slice(&scale));
     }
 }
